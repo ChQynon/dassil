@@ -1,0 +1,28 @@
+{
+  "name": "telegram-contest-bot",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "vercel-build": "echo Building...",
+    "setup": "node setup.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "contest",
+    "registration"
+  ],
+  "author": "",
+  "license": "ISC",
+  "description": "Telegram bot for contest registration",
+  "dependencies": {
+    "axios": "^1.9.0",
+    "dotenv": "^16.5.0",
+    "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}
