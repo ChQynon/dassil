@@ -25,7 +25,7 @@ async function setupWebhook() {
         return;
       }
 
-      const webhookURL = `${vercelURL}/api/telegram`;
+      const webhookURL = `${vercelURL}/api/telegram`.replace(/\/\//g, '/').replace(/^(https?:)\//, '$1//');
       
       try {
         // Удаляем старый вебхук

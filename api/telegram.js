@@ -1,13 +1,9 @@
 // Webhook handler for Vercel
-const botHandler = require('../src/index');
+const handleWebhook = require('../src/webhook');
 
 module.exports = async (req, res) => {
   try {
-    if (req.method === 'POST') {
-      await botHandler(req, res);
-    } else {
-      res.status(200).json({ status: 'ok' });
-    }
+    await handleWebhook(req, res);
   } catch (error) {
     console.error('Error in webhook handler:', error);
     res.status(500).json({ error: 'Internal server error' });

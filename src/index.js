@@ -82,7 +82,12 @@ const formatRegistrationInfo = (participant) => {
 // Command handlers
 bot.start(async (ctx) => {
   if (isAdmin(ctx)) {
-    await ctx.reply('Добро пожаловать, админ! Вы можете создать конкурс командой /new_contest');
+    await ctx.reply('Добро пожаловать, админ! Панель управления конкурсами:', 
+      Markup.keyboard([
+        ['🏆 Создать конкурс', '📋 Список конкурсов'],
+        ['📊 Статистика', '⚙️ Настройки']
+      ]).resize()
+    );
   } else {
     const callbackData = ctx.startPayload;
     if (callbackData && callbackData.startsWith('contest_')) {
@@ -169,6 +174,43 @@ bot.on('message', async (ctx) => {
       }
       
       break;
+    }
+    
+    // Handle awaiting deadline input
+    if (isAdmin(ctx.from.id) && contest.awaitingDeadlineInput && ctx.message.text) {
+      contest.deadline = ctx.message.text;
+      contest.awaitingDeadlineInput = false;
+      
+      await ctx.reply(`Дедлайн для конкурса ${contestId} установлен: ${ctx.message.text}`);
+      await updatePostWithParticipants(contestId);
+      return;
+    }
+    
+    // Handle awaiting broadcast message
+    if (isAdmin(ctx.from.id) && contest.awaitingBroadcastMessage && ctx.message.text) {
+      const message = ctx.message.text;
+      contest.awaitingBroadcastMessage = false;
+      
+      let sentCount = 0;
+      const errorsCount = 0;
+      
+      await ctx.reply('Начинаю рассылку...');
+      
+      for (const participant of contest.participants) {
+        try {
+          await bot.telegram.sendMessage(participant.id, message);
+          sentCount++;
+          
+          // Add a small delay to avoid hitting rate limits
+          await new Promise(resolve => setTimeout(resolve, 50));
+        } catch (error) {
+          console.error(`Error sending broadcast to ${participant.id}:`, error);
+          errorsCount++;
+        }
+      }
+      
+      await ctx.reply(`✅ Рассылка завершена!\nОтправлено: ${sentCount} из ${contest.participants.length} сообщений.\n${errorsCount > 0 ? `Ошибок: ${errorsCount}` : ''}`);
+      return;
     }
   }
   
@@ -258,7 +300,86 @@ bot.on('message', async (ctx) => {
 bot.on('callback_query', async (ctx) => {
   const callbackData = ctx.callbackQuery.data;
   
-  // Registration fields management
+  // New handlers for admin menu callbacks
+  if (callbackData === 'refresh_contests' && isAdmin(ctx)) {
+    await ctx.answerCbQuery('Список обновлен');
+    
+    if (contests.size === 0) {
+      return ctx.editMessageText('Конкурсы не найдены.');
+    }
+    
+    let message = '📋 Список конкурсов:\n\n';
+    const inlineButtons = [];
+    
+    for (const [id, contest] of contests.entries()) {
+      message += `ID: ${id}\n`;
+      message += `Участников: ${contest.participants.length}\n`;
+      message += `Дедлайн: ${contest.deadline || 'не установлен'}\n\n`;
+      
+      inlineButtons.push([
+        Markup.button.callback(`✏️ Редактировать ${id.substring(0, 6)}...`, `edit_contest_${id}`),
+        Markup.button.callback(`🚀 Досрочно начать ${id.substring(0, 6)}...`, `start_contest_${id}`)
+      ]);
+    }
+    
+    inlineButtons.push([Markup.button.callback('🔄 Обновить список', 'refresh_contests')]);
+    
+    await ctx.editMessageText(message, Markup.inlineKeyboard(inlineButtons));
+    return;
+  }
+  
+  if (callbackData.startsWith('start_contest_') && isAdmin(ctx)) {
+    const contestId = callbackData.replace('start_contest_', '');
+    const contest = contests.get(contestId);
+    
+    if (!contest) {
+      await ctx.answerCbQuery('Конкурс не найден');
+      return;
+    }
+    
+    // Mark contest as started early
+    contest.earlyStart = true;
+    contest.startedAt = new Date().toISOString();
+    
+    await ctx.answerCbQuery('Конкурс досрочно запущен!');
+    await ctx.reply(`Конкурс ${contestId} досрочно запущен!`);
+    
+    // You can add notification to the channel here
+    try {
+      await bot.telegram.sendMessage(
+        CHANNEL_ID,
+        `🚀 Внимание! Конкурс досрочно запущен!\n\n${contest.text}`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (error) {
+      console.error('Error sending early start notification:', error);
+    }
+    
+    return;
+  }
+  
+  if (callbackData.startsWith('edit_contest_') && isAdmin(ctx)) {
+    const contestId = callbackData.replace('edit_contest_', '');
+    const contest = contests.get(contestId);
+    
+    if (!contest) {
+      await ctx.answerCbQuery('Конкурс не найден');
+      return;
+    }
+    
+    await ctx.answerCbQuery('Управление конкурсом');
+    
+    await ctx.reply(`Управление конкурсом ${contestId}:`, Markup.inlineKeyboard([
+      [Markup.button.callback('✏️ Изменить текст', `edit_text_${contestId}`)],
+      [Markup.button.callback('⏰ Установить дедлайн', `set_deadline_${contestId}`)],
+      [Markup.button.callback('🔔 Сделать рассылку участникам', `broadcast_${contestId}`)],
+      [Markup.button.callback('👥 Список участников', `participants_${contestId}`)],
+      [Markup.button.callback('🔄 Обновить информацию', `update_post_${contestId}`)]
+    ]));
+    
+    return;
+  }
+  
   if (callbackData === 'add_registration_fields' && isAdmin(ctx)) {
     await ctx.answerCbQuery('Добавление полей для регистрации');
     await ctx.reply('Введите имя поля (например, "email" или "phone"):');
@@ -295,7 +416,6 @@ bot.on('callback_query', async (ctx) => {
     return;
   }
   
-  // Button management
   if (callbackData === 'setup_buttons' && isAdmin(ctx)) {
     await ctx.answerCbQuery('Настройка кнопок');
     
@@ -419,20 +539,6 @@ bot.on('callback_query', async (ctx) => {
     return;
   }
   
-  if (callbackData.startsWith('edit_callback_') && isAdmin(ctx)) {
-    await ctx.answerCbQuery('Введите новый callback');
-    
-    const buttonIndex = parseInt(callbackData.split('_')[2], 10);
-    currentButtonEdit = { 
-      contestId: currentContestCreation.id,
-      buttonIndex,
-      type: 'callback'
-    };
-    
-    await ctx.reply(`Введите новые callback данные для кнопки "${currentContestCreation.buttons[buttonIndex].text}" (текущие: ${currentContestCreation.buttons[buttonIndex].callback_data}):`);
-    return;
-  }
-  
   if (callbackData === 'remove_button' && isAdmin(ctx)) {
     await ctx.answerCbQuery('Удаление кнопки');
     
@@ -513,7 +619,6 @@ bot.on('callback_query', async (ctx) => {
     return;
   }
   
-  // Admin publishing a contest
   if (callbackData.startsWith('publish_') && isAdmin(ctx)) {
     const contestId = callbackData.split('_')[1];
     const contest = contests.get(contestId);
@@ -549,14 +654,12 @@ bot.on('callback_query', async (ctx) => {
     }
   }
   
-  // Cancel contest creation
   else if (callbackData === 'cancel_creation' && isAdmin(ctx)) {
     currentContestCreation = null;
     await ctx.answerCbQuery('Создание конкурса отменено');
     await ctx.editMessageText('❌ Создание конкурса отменено.');
   }
   
-  // User registration button from channel
   else if (callbackData.startsWith('register_')) {
     const contestId = callbackData.split('_')[1];
     if (contests.has(contestId)) {
@@ -572,6 +675,99 @@ bot.on('callback_query', async (ctx) => {
     } else {
       await ctx.answerCbQuery('Конкурс не найден или уже завершен.');
     }
+  }
+  
+  if (callbackData.startsWith('update_post_') && isAdmin(ctx)) {
+    const contestId = callbackData.replace('update_post_', '');
+    const contest = contests.get(contestId);
+    
+    if (!contest) {
+      await ctx.answerCbQuery('Конкурс не найден');
+      return;
+    }
+    
+    await updatePostWithParticipants(contestId);
+    await ctx.answerCbQuery('Пост обновлен!');
+    return;
+  }
+  
+  if (callbackData.startsWith('set_deadline_') && isAdmin(ctx)) {
+    const contestId = callbackData.replace('set_deadline_', '');
+    const contest = contests.get(contestId);
+    
+    if (!contest) {
+      await ctx.answerCbQuery('Конкурс не найден');
+      return;
+    }
+    
+    await ctx.answerCbQuery('Введите дедлайн');
+    await ctx.reply(`Введите дедлайн для конкурса ${contestId} в формате ДД.ММ.ГГГГ ЧЧ:ММ или просто текстом:`);
+    
+    // Store state for next message
+    contest.awaitingDeadlineInput = true;
+    return;
+  }
+  
+  if (callbackData.startsWith('broadcast_') && isAdmin(ctx)) {
+    const contestId = callbackData.replace('broadcast_', '');
+    const contest = contests.get(contestId);
+    
+    if (!contest) {
+      await ctx.answerCbQuery('Конкурс не найден');
+      return;
+    }
+    
+    if (contest.participants.length === 0) {
+      await ctx.answerCbQuery('Нет участников для рассылки');
+      await ctx.reply('В данном конкурсе нет зарегистрированных участников.');
+      return;
+    }
+    
+    await ctx.answerCbQuery('Введите сообщение для рассылки');
+    await ctx.reply(`Введите сообщение для рассылки ${contest.participants.length} участникам конкурса ${contestId}:`);
+    
+    // Store state for next message
+    contest.awaitingBroadcastMessage = true;
+    return;
+  }
+  
+  if (callbackData.startsWith('participants_') && isAdmin(ctx)) {
+    const contestId = callbackData.replace('participants_', '');
+    const contest = contests.get(contestId);
+    
+    if (!contest) {
+      await ctx.answerCbQuery('Конкурс не найден');
+      return;
+    }
+    
+    if (contest.participants.length === 0) {
+      await ctx.answerCbQuery('Нет участников');
+      await ctx.reply('В данном конкурсе нет зарегистрированных участников.');
+      return;
+    }
+    
+    await ctx.answerCbQuery('Список участников');
+    
+    // Send paginated list
+    const pageSize = 10;
+    const totalPages = Math.ceil(contest.participants.length / pageSize);
+    
+    for (let page = 0; page < totalPages; page++) {
+      const start = page * pageSize;
+      const end = Math.min(start + pageSize, contest.participants.length);
+      
+      let message = `👥 Участники конкурса ${contestId} (${page + 1}/${totalPages}):\n\n`;
+      
+      for (let i = start; i < end; i++) {
+        const participant = contest.participants[i];
+        message += `${i + 1}. ${participant.username} (ID: ${participant.id})\n`;
+        message += `   Дата регистрации: ${new Date(participant.registeredAt).toLocaleString()}\n\n`;
+      }
+      
+      await ctx.reply(message);
+    }
+    
+    return;
   }
 });
 
@@ -753,6 +949,85 @@ bot.command('edit_buttons', async (ctx) => {
   } else {
     await ctx.reply('Конкурс не найден.');
   }
+});
+
+// Add admin command to access admin panel
+bot.command('admin', async (ctx) => {
+  if (!isAdmin(ctx)) {
+    return ctx.reply('Эта команда доступна только администратору.');
+  }
+  
+  return ctx.reply('Панель управления конкурсами:', 
+    Markup.keyboard([
+      ['🏆 Создать конкурс', '📋 Список конкурсов'],
+      ['📊 Статистика', '⚙️ Настройки']
+    ]).resize()
+  );
+});
+
+// Handle admin menu buttons
+bot.hears('🏆 Создать конкурс', async (ctx) => {
+  if (!isAdmin(ctx)) return;
+  ctx.reply('Используйте команду /new_contest для создания нового конкурса');
+});
+
+bot.hears('📋 Список конкурсов', async (ctx) => {
+  if (!isAdmin(ctx)) return;
+  
+  if (contests.size === 0) {
+    return ctx.reply('Конкурсы не найдены.');
+  }
+  
+  let message = '📋 Список конкурсов:\n\n';
+  const inlineButtons = [];
+  
+  for (const [id, contest] of contests.entries()) {
+    message += `ID: ${id}\n`;
+    message += `Участников: ${contest.participants.length}\n`;
+    message += `Дедлайн: ${contest.deadline || 'не установлен'}\n\n`;
+    
+    // Create inline buttons for each contest
+    inlineButtons.push([
+      Markup.button.callback(`✏️ Редактировать ${id.substring(0, 6)}...`, `edit_contest_${id}`),
+      Markup.button.callback(`🚀 Досрочно начать ${id.substring(0, 6)}...`, `start_contest_${id}`)
+    ]);
+  }
+  
+  // Add final buttons for contests management
+  inlineButtons.push([Markup.button.callback('🔄 Обновить список', 'refresh_contests')]);
+  
+  await ctx.reply(message, Markup.inlineKeyboard(inlineButtons));
+});
+
+bot.hears('📊 Статистика', async (ctx) => {
+  if (!isAdmin(ctx)) return;
+  
+  let stats = '📊 Общая статистика:\n\n';
+  stats += `Всего конкурсов: ${contests.size}\n`;
+  
+  let totalParticipants = 0;
+  let activeContests = 0;
+  
+  for (const contest of contests.values()) {
+    totalParticipants += contest.participants.length;
+    if (!contest.finished) activeContests++;
+  }
+  
+  stats += `Всего участников: ${totalParticipants}\n`;
+  stats += `Активных конкурсов: ${activeContests}\n`;
+  stats += `Завершенных конкурсов: ${contests.size - activeContests}\n`;
+  
+  await ctx.reply(stats);
+});
+
+bot.hears('⚙️ Настройки', async (ctx) => {
+  if (!isAdmin(ctx)) return;
+  
+  await ctx.reply('Настройки управления:', Markup.inlineKeyboard([
+    [Markup.button.callback('🔔 Управление уведомлениями', 'manage_notifications')],
+    [Markup.button.callback('🚫 Удалить конкурс', 'delete_contest')],
+    [Markup.button.callback('📝 Изменить шаблон регистрации', 'edit_template')]
+  ]));
 });
 
 // Error handling
