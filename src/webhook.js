@@ -1,19 +1,23 @@
 const { Telegraf } = require('telegraf');
 const config = require('./config');
-const botModule = require('./index');
+const botIndex = require('./index');
 
-// Инициализируем бота
+// Инициализируем бота для вебхука
 const bot = new Telegraf(config.BOT_TOKEN);
+
+// Отключаем запуск через launch() в основном файле
+// и регистрируем все обработчики из основного файла
+bot.use(botIndex.middleware());
 
 // Функция для обработки вебхука
 const handleWebhook = async (req, res) => {
   try {
     if (req.method !== 'POST') {
-      return res.status(200).json({ status: 'webhook is active' });
+      return res.status(200).json({ status: 'webhook is active', time: new Date().toISOString() });
     }
     
     // Логирование запроса для отладки
-    console.log('Received webhook:', JSON.stringify(req.body).slice(0, 100) + '...');
+    console.log('Received webhook update:', new Date().toISOString());
     
     // Обработка обновления
     await bot.handleUpdate(req.body);

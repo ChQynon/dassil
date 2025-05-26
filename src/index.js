@@ -1035,22 +1035,18 @@ bot.catch((err, ctx) => {
   console.error(`Error for ${ctx.updateType}:`, err);
 });
 
-// Start the bot
-bot.launch()
-  .then(() => console.log('Bot started successfully!'))
-  .catch(err => console.error('Failed to start bot:', err));
+// Закомментируем запуск для режима локальной разработки
+// bot.launch()
+//  .then(() => console.log('Bot started successfully!'))
+//  .catch(err => console.error('Failed to start bot:', err));
 
-// Enable graceful stop
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+// Обработчики остановки (оставляем для локального режима)
+process.once('SIGINT', () => {
+  if (bot.isRunning) bot.stop('SIGINT');
+});
+process.once('SIGTERM', () => {
+  if (bot.isRunning) bot.stop('SIGTERM');
+});
 
-// For Vercel serverless deployment
-module.exports = async (req, res) => {
-  try {
-    await bot.handleUpdate(req.body);
-    res.status(200).end();
-  } catch (error) {
-    console.error('Error in webhook handler:', error);
-    res.status(500).end();
-  }
-}; 
+// Экспортируем бот для использования в вебхуке
+module.exports = bot; 

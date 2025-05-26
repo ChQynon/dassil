@@ -1,8 +1,31 @@
 // Статическая страница для проверки работы бота
-module.exports = (req, res) => {
-  const botToken = process.env.BOT_TOKEN || require('../src/config').BOT_TOKEN;
+const axios = require('axios');
+const config = require('../src/config');
+
+const checkBotStatus = async () => {
+  try {
+    const response = await axios.get(`https://api.telegram.org/bot${config.BOT_TOKEN}/getMe`);
+    return response.data.ok ? response.data.result : null;
+  } catch (error) {
+    console.error('Error checking bot status:', error.message);
+    return null;
+  }
+};
+
+module.exports = async (req, res) => {
+  const botToken = process.env.BOT_TOKEN || config.BOT_TOKEN;
   // скрываем полный токен
   const maskedToken = botToken.slice(0, 8) + '...' + botToken.slice(-5);
+  
+  // Проверяем статус бота
+  let botInfo = null;
+  let botStatus = 'Неизвестно';
+  try {
+    botInfo = await checkBotStatus();
+    botStatus = botInfo ? 'Активен' : 'Неактивен';
+  } catch (error) {
+    console.error('Error checking bot:', error);
+  }
   
   // Отправляем HTML с информацией о боте
   res.setHeader('Content-Type', 'text/html; charset=UTF-8');
@@ -37,7 +60,7 @@ module.exports = (req, res) => {
     .status {
       display: inline-block;
       padding: 5px 10px;
-      background: #4CAF50;
+      background: ${botInfo ? '#4CAF50' : '#f44336'};
       color: white;
       border-radius: 4px;
       font-weight: bold;
@@ -60,20 +83,38 @@ module.exports = (req, res) => {
       background: #ffedcc;
       border-left: 5px solid #ffc107;
     }
+    button {
+      background-color: #0088cc;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+      margin-top: 10px;
+    }
+    button:hover {
+      background-color: #006699;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>Telegram Бот для Конкурсов</h1>
-    <p class="status">Активен</p>
+    <p class="status">${botStatus}</p>
     
     <h2>Статус API</h2>
     <p>Вебхук настроен и активно принимает запросы от Telegram API.</p>
     
     <div class="info">
       <h3>Информация о боте</h3>
-      <p><strong>Токен:</strong> ${maskedToken}</p>
+      ${botInfo ? `
+      <p><strong>Имя бота:</strong> ${botInfo.first_name}</p>
+      <p><strong>Username:</strong> @${botInfo.username}</p>
+      ` : ''}
       <p><strong>Webhook URL:</strong> ${req.headers.host}/api/telegram</p>
+      <p><strong>Токен (маска):</strong> ${maskedToken}</p>
+      <p><strong>Канал:</strong> ${config.CHANNEL_ID}</p>
       <p>Сервер времени: ${new Date().toLocaleString()}</p>
     </div>
     
@@ -96,6 +137,8 @@ module.exports = (req, res) => {
         <li>У бота есть права для отправки сообщений</li>
       </ul>
     </div>
+    
+    <button onclick="window.location.reload()">Обновить статус</button>
   </div>
 </body>
 </html>`);
